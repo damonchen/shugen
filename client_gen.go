@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -37,9 +38,8 @@ type Package struct {
 	clients []Client
 }
 
-func extractClients(f *dst.File) *Package {
+func extractClients(f *dst.File) (*Package, error) {
 	packageName := f.Name.Name
-	fmt.Printf("package name %s\n", packageName)
 
 	pkg := Package{
 		name: packageName,
@@ -47,30 +47,40 @@ func extractClients(f *dst.File) *Package {
 	for _, decl := range f.Decls {
 		switch decl.(type) {
 		case *dst.GenDecl:
-			//genDecl := decl.(*dst.GenDecl)
-			//fmt.Println(genDecl)
 		case *dst.FuncDecl:
 			funcDecl := decl.(*dst.FuncDecl)
 			if funcDecl.Name.Name == "init" {
 				if funcDecl.Body == nil {
-					return nil
+					return nil, errors.New("not found init function")
 				}
 
-				clients := extractInitFunc(f, funcDecl.Body.List)
+				clients, err := extractInitFunc(f, funcDecl.Body.List)
+				if err != nil {
+					return nil, err
+				}
 				pkg.clients = clients
-				return &pkg
+				return &pkg, nil
 			}
 		}
 	}
-	return nil
+	return nil, errors.New("not support file content")
 }
 
-func extractInitFunc(f *dst.File, stmts []dst.Stmt) []Client {
+func extractInitFunc(f *dst.File, stmts []dst.Stmt) ([]Client, error) {
 	for _, stmt := range stmts {
-		exprStmt := stmt.(*dst.ExprStmt)
+		exprStmt, ok := stmt.(*dst.ExprStmt)
+		if !ok {
+			return nil, errors.New("init function has no stmt")
+		}
 
-		callExpr := exprStmt.X.(*dst.CallExpr)
-		//fmt.Println(callExpr, reflect.TypeOf(callExpr))
+		if exprStmt.X == nil {
+			continue
+		}
+
+		callExpr, ok := exprStmt.X.(*dst.CallExpr)
+		if !ok {
+			continue
+		}
 
 		selectorExpr := callExpr.Fun.(*dst.SelectorExpr)
 		funcIdent := selectorExpr.X.(*dst.Ident)
@@ -81,10 +91,14 @@ func extractInitFunc(f *dst.File, stmts []dst.Stmt) []Client {
 		}
 
 	}
-	return nil
+	return nil, errors.New("not found client definition")
 }
 
-func extractBundleClientParams(f *dst.File, callExpr *dst.CallExpr) []Client {
+func stripStringQuote(s string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(s, "\""), "\"")
+}
+
+func extractBundleClientParams(f *dst.File, callExpr *dst.CallExpr) ([]Client, error) {
 	var clients []Client
 	for _, arg := range callExpr.Args {
 		compositeLit := arg.(*dst.CompositeLit)
@@ -98,45 +112,57 @@ func extractBundleClientParams(f *dst.File, callExpr *dst.CallExpr) []Client {
 			switch ident.Name {
 			case "Name":
 				bl := kv.Value.(*dst.BasicLit)
-				client.Name = strings.TrimSuffix(strings.TrimPrefix(bl.Value, "\""), "\"")
+				client.Name = stripStringQuote(bl.Value)
 			case "APIs":
 				cl := kv.Value.(*dst.CompositeLit)
 				client.funcs = extractAPIs(cl)
 			default:
-				fmt.Println("unknown", ident.Name)
+				return nil, errors.New(fmt.Sprintf("unknown ident name %s", ident.Name))
 			}
 		}
 
 		clients = append(clients, client)
 	}
-	return clients
+	return clients, nil
 }
 
 func extractAPIs(cl *dst.CompositeLit) []Func {
 	fns := make([]Func, len(cl.Elts))
-	for i, cele := range cl.Elts {
+	j := 0
+	for _, cele := range cl.Elts {
 		tt := cele.(*dst.CompositeLit)
 		fn := Func{}
+		foundFn := false
 		for _, ele := range tt.Elts {
 			kv := ele.(*dst.KeyValueExpr)
+			if kv == nil {
+				continue
+			}
+
 			ident := kv.Key.(*dst.Ident)
 			switch ident.Name {
 			case "Name":
 				name := kv.Value.(*dst.BasicLit).Value
-				name = strings.TrimSuffix(strings.TrimPrefix(name, "\""), "\"")
+				name = stripStringQuote(name)
 				fn.Name = name
+				foundFn = true
 			case "Path":
 			case "Method":
 			case "Params":
 				params := kv.Value.(*dst.CompositeLit)
 				paramType := params.Type.(*dst.Ident)
 				fn.params = append(fn.params, Param{Name: paramType.Name})
+				foundFn = true
 			case "Response":
 				params := kv.Value.(*dst.CompositeLit)
 				fn.Resp = params.Type.(*dst.Ident).Name
+				foundFn = true
 			}
 		}
-		fns[i] = fn
+		if foundFn {
+			fns[j] = fn
+			j++
+		}
 	}
 	return fns
 }
@@ -188,7 +214,6 @@ func generateClient(client Client) string {
 	newClient := fmt.Sprintf(`func Get%s() %s {
 	return %s{}
 }
-
 `, clientName, clientName, clientName)
 
 	funcs := generateFuncs(client, client.funcs)

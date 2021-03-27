@@ -1,2 +1,3 @@
 # shugen
-shu generator
+
+[shu](https://github.com/damonchen/shu) generator

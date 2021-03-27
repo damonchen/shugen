@@ -82,7 +82,17 @@ func generatorAPI(inputFile string, outputFile string) (err error) {
 		return err
 	}
 
-	pkg := extractClients(f)
+	pkg, err := extractClients(f)
+	if err != nil {
+		return err
+	}
 	fileContent := generatePkg(pkg)
-	return ioutil.WriteFile(outputFile, []byte(fileContent), 0644)
+
+	err = ioutil.WriteFile(outputFile, []byte(fileContent), 0644)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("genereate %s done\n", outputFile)
+	return nil
 }
