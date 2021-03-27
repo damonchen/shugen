@@ -18,7 +18,7 @@ var (
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "./shugen.go", "generate shu api file")
+	rootCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "./client.go", "generate shu api file")
 	rootCmd.PersistentFlags().BoolVarP(&showVersion, "version", "v", false, "version of shugen")
 
 }
